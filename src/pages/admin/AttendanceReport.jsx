@@ -5,7 +5,10 @@ import WorkModeBadge from "../../components/WorkModeBadge";
 function formatTime(isoString) {
     if (!isoString) return "-";
     try {
-        const d = new Date(isoString);
+        // Backend (Railway/UTC) sends LocalDateTime without timezone suffix.
+        // Appending 'Z' tells JS it's UTC so toLocaleTimeString converts to local time.
+        const utc = isoString.endsWith('Z') || isoString.includes('+') ? isoString : isoString + 'Z';
+        const d = new Date(utc);
         return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
     } catch {
         return isoString;
