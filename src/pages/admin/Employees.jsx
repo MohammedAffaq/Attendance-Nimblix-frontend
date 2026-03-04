@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { Edit, Upload } from "lucide-react";
 import api from "../../api/api";
 
 const INITIAL_FORM = {
@@ -6,6 +7,7 @@ const INITIAL_FORM = {
     name: "",
     email: "",
     password: "",
+    role: "EMPLOYEE",
     photo: null,
 };
 
@@ -13,11 +15,17 @@ export default function Employees() {
     const [employees, setEmployees] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
+    const [editingId, setEditingId] = useState(null);
     const [form, setForm] = useState(INITIAL_FORM);
     const [photoPreview, setPhotoPreview] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
+    const [brokenPhotos, setBrokenPhotos] = useState(new Set());
     const [success, setSuccess] = useState("");
+    const [uploading, setUploading] = useState(false);
+    const [uploadResult, setUploadResult] = useState(null);
+    const xlsxInputRef = useRef(null);
     const fileInputRef = useRef(null);
 
     const fetchEmployees = () => {
@@ -31,15 +39,59 @@ export default function Employees() {
 
     useEffect(() => { fetchEmployees(); }, []);
 
-    const openModal = () => {
+    const handleXlsxUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (!file.name.toLowerCase().endsWith(".xlsx")) {
+            alert("Please select a valid .xlsx file.");
+            return;
+        }
+        setUploading(true);
+        setUploadResult(null);
+        const formData = new FormData();
+        formData.append("file", file);
+        try {
+            const res = await api.post("/api/admin/employees/upload", formData);
+            setUploadResult(res.data);
+            fetchEmployees();
+        } catch (err) {
+            const msg = err.response?.data?.message || err.response?.data || "Upload failed";
+            setUploadResult({ error: typeof msg === "string" ? msg : JSON.stringify(msg) });
+        } finally {
+            setUploading(false);
+            if (xlsxInputRef.current) xlsxInputRef.current.value = "";
+        }
+    };
+
+    const openAddModal = () => {
+        setIsEditing(false);
+        setEditingId(null);
         setForm(INITIAL_FORM);
         setPhotoPreview(null);
         setError("");
         setShowModal(true);
     };
 
+    const openEditModal = (emp) => {
+        setIsEditing(true);
+        setEditingId(emp.id);
+        setForm({
+            employeeId: emp.employeeId || "",
+            name: emp.name || "",
+            email: emp.email || "",
+            password: "",
+            role: emp.role || "EMPLOYEE",
+            photo: null,
+        });
+        setPhotoPreview(emp.photoPath ? `${import.meta.env.VITE_API_BASE_URL || ""}${emp.photoPath}` : null);
+        setError("");
+        setShowModal(true);
+    };
+
     const closeModal = () => {
         setShowModal(false);
+        setIsEditing(false);
+        setEditingId(null);
         setForm(INITIAL_FORM);
         setPhotoPreview(null);
         setError("");
@@ -63,8 +115,8 @@ export default function Employees() {
         if (!form.name.trim()) return "Name is required.";
         if (!form.email.trim()) return "Email is required.";
         if (!/\S+@\S+\.\S+/.test(form.email)) return "Enter a valid email address.";
-        if (!form.password.trim()) return "Password is required.";
-        if (form.password.length < 6) return "Password must be at least 6 characters.";
+        if (!isEditing && !form.password.trim()) return "Password is required.";
+        if (form.password && form.password.length < 6) return "Password must be at least 6 characters.";
         return null;
     };
 
@@ -82,16 +134,21 @@ export default function Employees() {
                 employeeId: form.employeeId,
                 name: form.name,
                 email: form.email,
-                password: form.password,
+                role: form.role,
             };
+            if (form.password) data.password = form.password;
+
             formData.append("data", JSON.stringify(data));
             if (form.photo) formData.append("photo", form.photo);
 
-            await api.post("/api/admin/employees", formData, {
-                headers: { "Content-Type": "multipart/form-data" },
-            });
+            if (isEditing) {
+                await api.put(`/api/admin/employees/${editingId}`, formData);
+                setSuccess("Employee updated successfully!");
+            } else {
+                await api.post("/api/admin/employees", formData);
+                setSuccess("Employee created successfully!");
+            }
 
-            setSuccess("Employee created successfully!");
             closeModal();
             fetchEmployees();
             setTimeout(() => setSuccess(""), 4000);
@@ -99,7 +156,7 @@ export default function Employees() {
             const msg =
                 err.response?.data?.message ||
                 err.response?.data ||
-                "Failed to create employee. Please try again.";
+                (isEditing ? "Failed to update employee." : "Failed to create employee.");
             setError(typeof msg === "string" ? msg : JSON.stringify(msg));
         } finally {
             setSubmitting(false);
@@ -111,10 +168,62 @@ export default function Employees() {
             {/* ── Page Header ── */}
             <div className="page-header">
                 <h2>Employee Management</h2>
-                <button style={addBtnStyle} onClick={openModal}>
-                    ＋ Add Employee
-                </button>
+                <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+                    {/* Excel Upload */}
+                    <button
+                        style={uploadBtnStyle}
+                        onClick={() => xlsxInputRef.current?.click()}
+                        disabled={uploading}
+                        title="Upload employees from Excel (.xlsx)"
+                    >
+                        <Upload size={15} />
+                        {uploading ? "Uploading..." : "Upload Excel"}
+                    </button>
+                    <input
+                        ref={xlsxInputRef}
+                        type="file"
+                        accept=".xlsx"
+                        style={{ display: "none" }}
+                        onChange={handleXlsxUpload}
+                    />
+                    <button style={addBtnStyle} onClick={openAddModal}>
+                        ＋ Add Employee
+                    </button>
+                </div>
             </div>
+
+            {/* ── Upload Result Panel ── */}
+            {uploadResult && (
+                <div style={uploadResult.error ? errorResultStyle : uploadResultStyle}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <strong>{uploadResult.error ? "❌ Upload Failed" : "📊 Upload Summary"}</strong>
+                        <button style={closeSummaryBtnStyle} onClick={() => setUploadResult(null)}>✕</button>
+                    </div>
+                    {uploadResult.error ? (
+                        <p style={{ margin: "6px 0 0" }}>{uploadResult.error}</p>
+                    ) : (
+                        <>
+                            <div style={summaryRowStyle}>
+                                <span>📋 Total rows processed:</span> <strong>{uploadResult.totalRows}</strong>
+                            </div>
+                            <div style={summaryRowStyle}>
+                                <span>✅ Successfully created:</span> <strong style={{ color: "#065f46" }}>{uploadResult.successCount}</strong>
+                            </div>
+                            <div style={summaryRowStyle}>
+                                <span>⚠️ Skipped / failed:</span> <strong style={{ color: "#991b1b" }}>{uploadResult.failCount}</strong>
+                            </div>
+                            {uploadResult.errors?.length > 0 && (
+                                <details style={{ marginTop: "8px" }}>
+                                    <summary style={{ cursor: "pointer", fontSize: "0.8rem", color: "#6b7280" }}>View {uploadResult.errors.length} error(s)</summary>
+                                    <ul style={{ margin: "6px 0 0", paddingLeft: "18px", fontSize: "0.78rem", color: "#7f1d1d" }}>
+                                        {uploadResult.errors.map((e, idx) => <li key={idx}>{e}</li>)}
+                                    </ul>
+                                </details>
+                            )}
+                        </>
+                    )}
+                </div>
+            )}
 
             {/* ── Success Banner ── */}
             {success && <div style={successBannerStyle}>✅ {success}</div>}
@@ -133,7 +242,16 @@ export default function Employees() {
                         {employees.map((emp) => (
                             <li key={emp.id} style={listItemStyle}>
                                 <div style={avatarStyle}>
-                                    {emp.name ? emp.name.charAt(0).toUpperCase() : "?"}
+                                    {emp.photoPath && !brokenPhotos.has(emp.id) ? (
+                                        <img
+                                            src={`${import.meta.env.VITE_API_BASE_URL || ""}${emp.photoPath}`}
+                                            alt={emp.name}
+                                            style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }}
+                                            onError={() => setBrokenPhotos(prev => new Set(prev).add(emp.id))}
+                                        />
+                                    ) : (
+                                        emp.name ? emp.name.charAt(0).toUpperCase() : "?"
+                                    )}
                                 </div>
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                     <div style={{ fontWeight: "600", color: "#1e293b", fontSize: "0.9rem" }}>
@@ -147,6 +265,9 @@ export default function Employees() {
                                     <span style={empIdBadgeStyle}>{emp.employeeId}</span>
                                 )}
                                 <span style={roleBadgeStyle}>{emp.role}</span>
+                                <button style={editIconBtnStyle} onClick={() => openEditModal(emp)} title="Edit Employee">
+                                    <Edit size={18} />
+                                </button>
                             </li>
                         ))}
                     </ul>
@@ -163,7 +284,7 @@ export default function Employees() {
                         {/* Modal header */}
                         <div style={modalHeaderStyle}>
                             <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: "700" }}>
-                                Add New Employee
+                                {isEditing ? "Edit Employee" : "Add New Employee"}
                             </h3>
                             <button style={closeBtnStyle} onClick={closeModal} aria-label="Close">
                                 ✕
@@ -208,13 +329,26 @@ export default function Employees() {
 
                             <div style={formGroupStyle}>
                                 <label style={labelStyle} htmlFor="password">
-                                    Password <span style={{ color: "red" }}>*</span>
+                                    Password {isEditing ? <span style={{ color: "#6b7280", fontWeight: "normal" }}>(leave blank to keep unchanged)</span> : <span style={{ color: "red" }}>*</span>}
                                 </label>
                                 <input
                                     id="password" name="password" type="password"
                                     placeholder="Min. 6 characters" value={form.password}
                                     onChange={handleChange} style={inputStyle}
                                 />
+                            </div>
+
+                            <div style={formGroupStyle}>
+                                <label style={labelStyle} htmlFor="role">
+                                    Role <span style={{ color: "red" }}>*</span>
+                                </label>
+                                <select
+                                    id="role" name="role" value={form.role}
+                                    onChange={handleChange} style={inputStyle}
+                                >
+                                    <option value="EMPLOYEE">EMPLOYEE</option>
+                                    <option value="ADMIN">ADMIN</option>
+                                </select>
                             </div>
 
                             {/* Photo Upload */}
@@ -255,7 +389,7 @@ export default function Employees() {
                                 }}
                                 disabled={submitting}
                             >
-                                {submitting ? "Creating..." : "Create Employee"}
+                                {submitting ? (isEditing ? "Updating..." : "Creating...") : (isEditing ? "Save Changes" : "Create Employee")}
                             </button>
                             <button
                                 type="button" style={cancelBtnStyle}
@@ -287,6 +421,71 @@ const addBtnStyle = {
     gap: "6px",
     whiteSpace: "nowrap",
     flexShrink: 0,
+};
+
+const uploadBtnStyle = {
+    padding: "10px 16px",
+    background: "#fff",
+    color: "#374151",
+    border: "1.5px solid #d1d5db",
+    borderRadius: "8px",
+    cursor: "pointer",
+    fontWeight: "600",
+    fontSize: "0.875rem",
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+};
+
+const uploadResultStyle = {
+    background: "#f0fdf4",
+    border: "1px solid #86efac",
+    borderRadius: "8px",
+    padding: "12px 16px",
+    marginBottom: "16px",
+    fontSize: "0.875rem",
+    color: "#14532d",
+};
+
+const errorResultStyle = {
+    background: "#fef2f2",
+    border: "1px solid #fca5a5",
+    borderRadius: "8px",
+    padding: "12px 16px",
+    marginBottom: "16px",
+    fontSize: "0.875rem",
+    color: "#7f1d1d",
+};
+
+const summaryRowStyle = {
+    display: "flex",
+    justifyContent: "space-between",
+    marginTop: "6px",
+    fontSize: "0.84rem",
+};
+
+const closeSummaryBtnStyle = {
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    fontSize: "1rem",
+    color: "#6b7280",
+    lineHeight: 1,
+};
+
+const editIconBtnStyle = {
+    background: "none",
+    border: "none",
+    color: "#64748b",
+    cursor: "pointer",
+    padding: "6px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: "6px",
+    marginLeft: "8px",
 };
 
 const successBannerStyle = {
