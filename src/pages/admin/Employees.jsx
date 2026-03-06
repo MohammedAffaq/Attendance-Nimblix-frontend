@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Edit, Upload } from "lucide-react";
+import { Edit, Upload, Trash2 } from "lucide-react";
 import api from "../../api/api";
 
 const INITIAL_FORM = {
@@ -163,6 +163,24 @@ export default function Employees() {
         }
     };
 
+    const handleDelete = async (id, name) => {
+        if (!window.confirm(`Are you sure you want to delete employee "${name}"? This action cannot be undone.`)) {
+            return;
+        }
+
+        try {
+            await api.delete(`/api/admin/employees/${id}`);
+            setSuccess("Employee deleted successfully!");
+            fetchEmployees();
+            setTimeout(() => setSuccess(""), 4000);
+        } catch (err) {
+            const msg = err.response?.data?.message || err.response?.data || "Failed to delete employee.";
+            setError(typeof msg === "string" ? msg : JSON.stringify(msg));
+            window.scrollTo(0, 0);
+            setTimeout(() => setError(""), 4000);
+        }
+    };
+
     return (
         <div>
             {/* ── Page Header ── */}
@@ -267,6 +285,9 @@ export default function Employees() {
                                 <span style={roleBadgeStyle}>{emp.role}</span>
                                 <button style={editIconBtnStyle} onClick={() => openEditModal(emp)} title="Edit Employee">
                                     <Edit size={18} />
+                                </button>
+                                <button style={trashIconBtnStyle} onClick={() => handleDelete(emp.id, emp.name)} title="Delete Employee">
+                                    <Trash2 size={18} />
                                 </button>
                             </li>
                         ))}
@@ -486,6 +507,19 @@ const editIconBtnStyle = {
     justifyContent: "center",
     borderRadius: "6px",
     marginLeft: "8px",
+};
+
+const trashIconBtnStyle = {
+    background: "none",
+    border: "none",
+    color: "#ef4444",
+    cursor: "pointer",
+    padding: "6px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: "6px",
+    marginLeft: "4px",
 };
 
 const successBannerStyle = {
